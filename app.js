@@ -97,18 +97,23 @@ async function handleOAuthCallback(code, returnedState) {
   const verifier    = localStorage.getItem(LS.CODE_VERIFIER);
 
   if (!storedState || returnedState !== storedState) {
-    showToast('Auth state mismatch — tap Connect again', 'error');
+    // State mismatch — could be expired session or Safari privacy wiping localStorage
+    // Clean up and let user try again
+    localStorage.removeItem(LS.OAUTH_STATE);
+    localStorage.removeItem(LS.CODE_VERIFIER);
+    window.history.replaceState({}, document.title, window.location.pathname);
+    showAuthError('Login session expired or was interrupted. Tap Connect Spotify to try again.');
     showScreen('start');
     renderStartScreen();
     return;
   }
 
-  // Clean up PKCE data
-  localStorage.removeItem(LS.OAUTH_STATE);
-  localStorage.removeItem(LS.CODE_VERIFIER);
-
   // Clean the URL so a page reload doesn't re-trigger the callback
   window.history.replaceState({}, document.title, window.location.pathname);
+
+  // Show loading state while exchanging token
+  showScreen('loading-tracks');
+  document.getElementById('loading-playlist-name').textContent = 'Connecting to Spotify…';
 
   try {
     const res = await fetch(SPOTIFY_TOKEN, {
@@ -123,17 +128,21 @@ async function handleOAuthCallback(code, returnedState) {
       }),
     });
 
+    // Clean up PKCE data only after a successful exchange attempt
+    localStorage.removeItem(LS.OAUTH_STATE);
+    localStorage.removeItem(LS.CODE_VERIFIER);
+
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error_description || `Token exchange failed (${res.status})`);
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error_description || `Token exchange failed (HTTP ${res.status})`);
     }
 
     const data = await res.json();
     saveTokens(data);
     await continueAfterAuth();
   } catch (err) {
-    console.error('OAuth error:', err);
-    showToast(`Login failed: ${err.message}`, 'error');
+    console.error('OAuth token exchange error:', err);
+    showAuthError(`Could not connect to Spotify: ${err.message}`);
     showScreen('start');
     renderStartScreen();
   }
@@ -822,7 +831,28 @@ function showEndScreen(winner) {
   `).join('');
 }
 
-// ==================== TOASTS ====================
+// ==================== TOASTS & ERRORS ====================
+// Persistent banner for auth errors (not a disappearing toast)
+function showAuthError(msg) {
+  let banner = document.getElementById('auth-error-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'auth-error-banner';
+    banner.style.cssText = [
+      'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:300',
+      'background:#2A1010', 'color:#F5A0A0', 'border-bottom:1px solid #5A2020',
+      'padding:14px 20px', 'font-size:14px', 'line-height:1.4',
+      'display:flex', 'align-items:center', 'justify-content:space-between', 'gap:12px'
+    ].join(';');
+    document.body.appendChild(banner);
+  }
+  banner.innerHTML = `
+    <span>${escHtml(msg)}</span>
+    <button onclick="this.parentElement.remove()"
+            style="background:none;border:none;color:#F5A0A0;font-size:20px;cursor:pointer;flex-shrink:0">✕</button>
+  `;
+}
+
 function showToast(msg, type = 'info') {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
@@ -848,6 +878,16 @@ async function init() {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
 
+  // Always set up defaults and bind events first so every button works
+  // regardless of which path below we take (OAuth callback or normal boot)
+  if (!S.players.length) {
+    S.players = [
+      { name: 'Player 1', tokens: 3, score: 0 },
+      { name: 'Player 2', tokens: 3, score: 0 },
+    ];
+  }
+  bindEvents();
+
   const params = new URLSearchParams(window.location.search);
   const code   = params.get('code');
   const error  = params.get('error');
@@ -861,30 +901,26 @@ async function init() {
     return;
   }
 
-  if (code && S.clientId) {
+  if (code) {
+    if (!S.clientId) {
+      // Client ID somehow missing — re-enter it
+      window.history.replaceState({}, document.title, window.location.pathname);
+      showToast('Client ID not found — please re-enter it', 'error');
+      showScreen('config');
+      renderConfigScreen();
+      return;
+    }
     await handleOAuthCallback(code, state);
     return;
   }
 
-  // Try to restore from stored token
-  if (S.accessToken && Date.now() < S.tokenExpiry) {
-    // Good token
-  } else if (S.refreshToken) {
-    await refreshTokens();
+  // Normal boot: try to restore token
+  if (!S.accessToken || Date.now() >= S.tokenExpiry) {
+    if (S.refreshToken) await refreshTokens();
   }
 
   showScreen('start');
   renderStartScreen();
-
-  // Default players
-  if (!S.players.length) {
-    S.players = [
-      { name: 'Player 1', tokens: 3, score: 0 },
-      { name: 'Player 2', tokens: 3, score: 0 },
-    ];
-  }
-
-  bindEvents();
 }
 
 function bindEvents() {
@@ -948,6 +984,27 @@ function bindEvents() {
   document.getElementById('btn-year-plus').addEventListener('click', () => {
     const inp = document.getElementById('year-guess-input');
     inp.value = Math.min(new Date().getFullYear(), +inp.value + 1);
+  });
+
+  // When the page becomes visible again (e.g. user switched from Spotify OAuth tab back
+  // to the PWA or Safari tab), re-read auth state from localStorage in case a token
+  // was saved by the OAuth callback in a different tab.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && S.phase === 'start') {
+      S.accessToken  = localStorage.getItem(LS.ACCESS_TOKEN)  || null;
+      S.refreshToken = localStorage.getItem(LS.REFRESH_TOKEN) || null;
+      S.tokenExpiry  = parseInt(localStorage.getItem(LS.TOKEN_EXPIRY)) || 0;
+      renderStartScreen();
+    }
+  });
+
+  // Same for cross-tab localStorage updates (works in regular Safari browser)
+  window.addEventListener('storage', e => {
+    if (e.key === LS.ACCESS_TOKEN && e.newValue && S.phase === 'start') {
+      S.accessToken  = e.newValue;
+      S.tokenExpiry  = parseInt(localStorage.getItem(LS.TOKEN_EXPIRY)) || 0;
+      renderStartScreen();
+    }
   });
 
   // End
