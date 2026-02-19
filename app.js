@@ -109,12 +109,15 @@ async function handleOAuthCallback(code, returnedState) {
   const verifier    = localStorage.getItem(LS.CODE_VERIFIER);
 
   if (!storedState || returnedState !== storedState) {
-    // State mismatch — could be expired session or Safari privacy wiping localStorage
-    // Clean up and let user try again
     localStorage.removeItem(LS.OAUTH_STATE);
     localStorage.removeItem(LS.CODE_VERIFIER);
     window.history.replaceState({}, document.title, window.location.pathname);
-    showAuthError('Login session expired or was interrupted. Tap Connect Spotify to try again.');
+    // Detect Private Browsing (localStorage writes are silently dropped)
+    const isPrivate = !storedState;
+    const msg = isPrivate
+      ? 'Safari Private Browsing blocks logins — open a regular (non-private) tab and try again.'
+      : 'Login session expired — try connecting again. If this keeps happening, clear your browser cache.';
+    showAuthError(msg);
     showScreen('start');
     renderStartScreen();
     return;
@@ -146,7 +149,11 @@ async function handleOAuthCallback(code, returnedState) {
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.error_description || `Token exchange failed (HTTP ${res.status})`);
+      const code = body.error || '';
+      const desc = body.error_description || `HTTP ${res.status}`;
+      const err = new Error(desc);
+      err.code = code;
+      throw err;
     }
 
     const data = await res.json();
@@ -154,7 +161,13 @@ async function handleOAuthCallback(code, returnedState) {
     await continueAfterAuth();
   } catch (err) {
     console.error('OAuth token exchange error:', err);
-    showAuthError(`Could not connect to Spotify: ${err.message}`);
+    let hint = '';
+    if (!navigator.onLine || err.message === 'Failed to fetch' || err.message.includes('NetworkError')) {
+      hint = ' (Network blocked — check if an ad blocker or Safari content blocker is blocking accounts.spotify.com)';
+    } else if (err.code === 'invalid_grant' || err.message.includes('invalid_grant')) {
+      hint = ' (Redirect URI mismatch — open Spotify Setup and make sure the Redirect URI shown there is in your Spotify dashboard)';
+    }
+    showAuthError(`Spotify login failed: ${err.message}${hint}`);
     showScreen('start');
     renderStartScreen();
   }
@@ -229,6 +242,14 @@ async function spotifyFetch(path, options = {}) {
     const refreshed = await refreshTokens();
     if (!refreshed) { logout(); return null; }
     return spotifyFetch(path, options);
+  }
+
+  // Rate-limited: wait for Retry-After then retry once
+  if (res.status === 429 && !options._retried) {
+    const wait = Math.max(parseInt(res.headers.get('Retry-After') || '10'), 5);
+    showToast(`Spotify rate limit — retrying in ${wait}s…`, 'error');
+    await new Promise(r => setTimeout(r, wait * 1000));
+    return spotifyFetch(path, { ...options, _retried: true });
   }
 
   if (res.status === 204 || res.status === 202) return true;
