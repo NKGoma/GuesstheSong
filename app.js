@@ -75,9 +75,21 @@ async function startAuth() {
   const challenge = await sha256base64url(verifier);
   const state     = randomStr(16);
 
-  // Use localStorage (not sessionStorage) — Safari clears sessionStorage on cross-origin redirects
-  localStorage.setItem(LS.CODE_VERIFIER, verifier);
-  localStorage.setItem(LS.OAUTH_STATE, state);
+  // Use localStorage (not sessionStorage) — Safari clears sessionStorage on cross-origin redirects.
+  // Verify the write actually persisted — Safari Private Browsing silently discards all writes.
+  try {
+    localStorage.setItem(LS.CODE_VERIFIER, verifier);
+    localStorage.setItem(LS.OAUTH_STATE, state);
+    if (localStorage.getItem(LS.CODE_VERIFIER) !== verifier) {
+      throw new Error('read-back mismatch');
+    }
+  } catch {
+    showAuthError(
+      'Safari Private Browsing blocks the login flow. ' +
+      'Please disable Private Browsing (or use a regular tab) and try again.'
+    );
+    return;
+  }
 
   const params = new URLSearchParams({
     client_id: S.clientId,
@@ -193,7 +205,10 @@ function logout() {
 }
 
 function getRedirectUri() {
-  return window.location.origin + window.location.pathname;
+  const path = window.location.pathname.endsWith('/')
+    ? window.location.pathname
+    : window.location.pathname + '/';
+  return window.location.origin + path;
 }
 
 // ==================== SPOTIFY API ====================
