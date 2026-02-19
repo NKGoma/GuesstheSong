@@ -3,92 +3,78 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0">
-  <meta name="theme-color" content="#0d0d14">
+  <meta name="theme-color" content="#F8F7F2">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Norster">
   <meta name="mobile-web-app-capable" content="yes">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.png">
   <link rel="stylesheet" href="./style.css">
-  <title>Norster – Music Timeline Game</title>
+  <title>Norster</title>
 </head>
 <body>
 
-<!-- ==================== TOAST CONTAINER ==================== -->
-<div class="toast-container" id="toast-container"></div>
+<div id="toast-container"></div>
 
-<!-- ==================== SPLASH / START ==================== -->
+<!-- ==================== START ==================== -->
 <div class="screen active" id="screen-start">
-  <div class="splash-logo">🎵</div>
-  <div class="splash-title">NOR<span>STER</span></div>
-  <div class="splash-subtitle">Music Timeline Game</div>
-  <div class="splash-actions">
-    <button class="btn btn-spotify btn-lg btn-block" id="btn-connect-spotify">
-      Connect Spotify
-    </button>
-    <button class="btn btn-primary btn-lg btn-block" id="btn-new-game" style="display:none">
-      🎮 New Game
-    </button>
-    <button class="btn btn-secondary btn-block" id="btn-setup-client">
-      ⚙️ Spotify Setup
-    </button>
-    <button class="btn btn-ghost btn-block" id="btn-logout" style="margin-top:4px">
-      Disconnect Spotify
-    </button>
+  <div class="start-top">
+    <div class="start-wordmark">NORSTER</div>
+    <div class="start-tagline">Music Timeline Game</div>
   </div>
-  <div class="splash-footer">
-    <span id="user-status"></span>
+  <div class="start-bottom">
+    <div class="start-status" id="user-status"></div>
+    <button class="btn btn-spotify btn-lg btn-block" id="btn-connect-spotify">Connect Spotify</button>
+    <button class="btn btn-dark btn-lg btn-block" id="btn-new-game" style="display:none">New Game</button>
+    <button class="btn btn-outline btn-block" id="btn-setup-client">Spotify Setup</button>
+    <button class="btn btn-ghost btn-block" id="btn-logout">Disconnect</button>
   </div>
 </div>
 
-<!-- ==================== CONFIG / SPOTIFY SETUP ==================== -->
+<!-- ==================== CONFIG ==================== -->
 <div class="screen" id="screen-config">
-  <div class="app-header">
-    <button class="header-btn" id="btn-config-back">← Back</button>
-    <div class="app-logo">NOR<span>STER</span></div>
-    <div style="width:56px"></div>
+  <div class="topbar">
+    <button class="topbar-back" id="btn-config-back">←</button>
+    <span class="topbar-title">Spotify Setup</span>
+    <span class="wordmark">NORSTER</span>
   </div>
-  <div class="screen-scroll">
-    <div class="setup-content">
+  <div class="screen-body">
+    <div class="setup-steps">
 
       <div class="setup-step">
-        <div class="step-number">1</div>
-        <h3>Create a Spotify App</h3>
-        <p>Go to <strong>developer.spotify.com</strong> → Log in → "Create App".<br>
-           Name it anything, e.g. "Norster".</p>
+        <div class="step-n">Step 01</div>
+        <h2>Create a Spotify App</h2>
+        <p>Log into <strong>developer.spotify.com</strong> and click Create App. Name it anything — "Norster" works.</p>
         <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener"
-           class="btn btn-secondary btn-sm" style="margin-top:4px">
+           class="btn btn-outline btn-sm" style="align-self:flex-start">
           Open Spotify Dashboard ↗
         </a>
       </div>
 
       <div class="setup-step">
-        <div class="step-number">2</div>
-        <h3>Add your Redirect URI</h3>
-        <p>In your Spotify app settings under <strong>"Redirect URIs"</strong>, add exactly this URL:</p>
-        <div class="copy-url-box" id="redirect-uri-display"></div>
-        <p style="margin-top:8px;font-size:12px">Tap to copy, then paste it in Spotify.</p>
+        <div class="step-n">Step 02</div>
+        <h2>Add Redirect URI</h2>
+        <p>In your Spotify app settings → Redirect URIs, add this exact URL:</p>
+        <div class="url-box" id="redirect-uri-display"></div>
+        <div class="note-box">Copy it exactly as shown — no trailing slash changes.</div>
       </div>
 
       <div class="setup-step">
-        <div class="step-number">3</div>
-        <h3>Enter Your Client ID</h3>
-        <p>Copy the <strong>Client ID</strong> from your Spotify app's settings page.</p>
-        <div class="input-group">
-          <label class="input-label" for="input-client-id">Client ID</label>
-          <input type="text" id="input-client-id" placeholder="e.g. 3a8f2b1c4d…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-        </div>
-        <button class="btn btn-primary btn-block" id="btn-save-client-id" style="margin-top:12px">
+        <div class="step-n">Step 03</div>
+        <h2>Enter Client ID</h2>
+        <p>Copy the Client ID from your Spotify app's overview page.</p>
+        <input type="text" id="input-client-id" placeholder="e.g. 3a8f2b1c4d5e…"
+               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <button class="btn btn-dark btn-block" id="btn-save-client-id" style="margin-top:8px">
           Save & Continue
         </button>
       </div>
 
-      <div class="setup-step" style="border-color: var(--primary); background: var(--primary-glow);">
-        <div class="step-number" style="background: var(--warning); color: #000;">!</div>
-        <h3>Requirements</h3>
-        <p>You need <strong>Spotify Premium</strong> for the app to control music playback remotely.<br><br>
-           Without Premium, you'll get a link to open tracks in Spotify manually.</p>
+      <div class="setup-step">
+        <div class="step-n">Note</div>
+        <h2>Spotify Premium</h2>
+        <p>Remote playback control requires Spotify Premium. Without it, you'll get a manual link to open tracks in the Spotify app.</p>
       </div>
 
     </div>
@@ -97,252 +83,225 @@
 
 <!-- ==================== PLAYLISTS ==================== -->
 <div class="screen" id="screen-playlists">
-  <div class="app-header">
-    <button class="header-btn" id="btn-playlists-back">← Back</button>
-    <div class="app-logo">NOR<span>STER</span></div>
-    <div style="width:56px"></div>
+  <div class="topbar">
+    <button class="topbar-back" id="btn-playlists-back">←</button>
+    <span class="topbar-title">Choose Playlist</span>
+    <span class="wordmark">NORSTER</span>
   </div>
-  <div class="section-title">Choose a Playlist</div>
-  <div class="screen-scroll" style="padding-bottom:0">
-    <div id="playlist-grid" style="padding:0 16px 24px">
-      <div class="loading-state"><div class="spinner"></div><p>Loading playlists…</p></div>
+  <div class="screen-body">
+    <div id="playlist-grid">
+      <div class="loading-center"><div class="spinner"></div>Loading playlists…</div>
     </div>
   </div>
 </div>
 
 <!-- ==================== LOADING TRACKS ==================== -->
-<div class="screen" id="screen-loading-tracks" style="align-items:center;justify-content:center;padding:40px">
-  <div class="spinner" style="width:48px;height:48px;margin-bottom:20px"></div>
-  <h2 style="text-align:center">Loading songs…</h2>
-  <p id="loading-playlist-name" style="text-align:center;margin-top:8px"></p>
+<div class="screen" id="screen-loading-tracks" style="align-items:center;justify-content:center">
+  <div class="spinner" style="width:40px;height:40px;margin-bottom:20px"></div>
+  <div style="font-size:16px;font-weight:600;color:var(--text)">Loading songs…</div>
+  <div id="loading-playlist-name" style="font-size:13px;color:var(--text-2);margin-top:6px"></div>
 </div>
 
 <!-- ==================== PLAYER SETUP ==================== -->
 <div class="screen" id="screen-players">
-  <div class="app-header">
-    <button class="header-btn" id="btn-players-back">← Back</button>
-    <div class="app-logo">NOR<span>STER</span></div>
-    <div style="width:56px"></div>
+  <div class="topbar">
+    <button class="topbar-back" id="btn-players-back">←</button>
+    <span class="topbar-title">Game Setup</span>
+    <span class="wordmark">NORSTER</span>
   </div>
-  <div class="screen-scroll">
-    <div style="padding:16px 20px 0">
-      <div class="highlight-box">
-        🎵 <strong id="selected-playlist-name"></strong><br>
-        <span id="selected-track-count" style="color:var(--text-muted);font-size:12px"></span>
+  <div class="screen-body">
+
+    <!-- Selected playlist pill -->
+    <div class="playlist-pill">
+      <div class="playlist-pill-art" id="pill-art">🎵</div>
+      <div>
+        <div class="playlist-pill-name" id="selected-playlist-name"></div>
+        <div class="playlist-pill-count" id="selected-track-count"></div>
       </div>
     </div>
 
-    <div class="section-title">Players</div>
-    <div id="player-list" class="player-list"></div>
-    <button class="add-player-btn" id="btn-add-player">+ Add Player</button>
+    <!-- Players -->
+    <div style="padding:24px 24px 8px">
+      <div class="section-label">Players</div>
+    </div>
+    <div id="player-list" class="player-rows"></div>
+    <button class="add-row" id="btn-add-player">+ Add player</button>
 
-    <div class="section-title" style="margin-top:8px">Difficulty</div>
-    <div id="difficulty-options" class="difficulty-options"></div>
+    <!-- Difficulty -->
+    <div style="padding:24px 24px 8px">
+      <div class="section-label">Difficulty</div>
+    </div>
+    <div id="difficulty-options" class="diff-rows"></div>
 
-    <div class="section-title" style="margin-top:8px">Starting Tokens</div>
-    <div class="token-setting">
-      <label>Tokens per player</label>
-      <div class="token-control">
-        <button class="token-btn" id="btn-token-minus">−</button>
-        <span class="token-value" id="token-value">3</span>
-        <button class="token-btn" id="btn-token-plus">+</button>
+    <!-- Tokens -->
+    <div style="padding:24px 24px 8px">
+      <div class="section-label">Starting Tokens</div>
+    </div>
+    <div class="token-row">
+      <div class="token-row-label">Tokens per player</div>
+      <div class="stepper">
+        <button class="stepper-btn" id="btn-token-minus">−</button>
+        <span class="stepper-val" id="token-value">3</span>
+        <button class="stepper-btn" id="btn-token-plus">+</button>
       </div>
     </div>
-    <p style="padding:8px 20px 0;font-size:12px">
-      Use tokens to: <strong>Skip</strong> a song (−1 token), or earn them by naming songs (Pro/Expert mode).
-    </p>
-  </div>
+    <div style="padding:12px 24px 32px;font-size:13px;color:var(--text-2);line-height:1.6">
+      Use tokens to skip a hard song. Earn more by naming songs in Pro or Expert mode.
+    </div>
 
-  <div class="setup-footer">
-    <button class="btn btn-primary btn-block btn-lg" id="btn-start-game-setup">
-      Continue →
-    </button>
+  </div>
+  <div class="screen-footer">
+    <button class="btn btn-dark btn-lg btn-block" id="btn-start-game-setup">Continue →</button>
   </div>
 </div>
 
-<!-- ==================== DEVICE SETUP ==================== -->
+<!-- ==================== DEVICE ==================== -->
 <div class="screen" id="screen-device">
-  <div class="app-header">
-    <button class="header-btn" id="btn-device-back">← Back</button>
-    <div class="app-logo">NOR<span>STER</span></div>
-    <div style="width:56px"></div>
+  <div class="topbar">
+    <button class="topbar-back" id="btn-device-back">←</button>
+    <span class="topbar-title">Connect Spotify</span>
+    <span class="wordmark">NORSTER</span>
   </div>
-  <div class="screen-scroll">
-    <div class="device-content">
-
-      <div class="device-status" id="device-status">
-        <div class="device-icon">📱</div>
-        <h2>Connect Spotify</h2>
-        <p>Finding active devices…</p>
-      </div>
-
-      <div class="steps-list">
-        <div class="step-row">
-          <div class="step-num">1</div>
-          <div class="step-text">Tap <strong>Open Spotify</strong> below to launch the Spotify app</div>
-        </div>
-        <div class="step-row">
-          <div class="step-num">2</div>
-          <div class="step-text">In Spotify, tap play on <strong>any song</strong> for a second</div>
-        </div>
-        <div class="step-row">
-          <div class="step-num">3</div>
-          <div class="step-text">Come <strong>back to this app</strong> and tap "Check Again"</div>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:10px">
-        <button class="btn btn-spotify btn-block" id="btn-open-spotify">
-          Open Spotify 🎵
-        </button>
-        <button class="btn btn-secondary btn-block" id="btn-check-devices">
-          Check Again ↺
-        </button>
-      </div>
-
-      <div id="device-list" class="device-list"></div>
-
+  <div class="screen-body">
+    <div id="device-status" class="device-hero">
+      <div class="device-hero-icon">📱</div>
+      <h1>Finding Spotify</h1>
+      <p>Looking for active Spotify devices…</p>
     </div>
-  </div>
 
-  <div class="setup-footer">
-    <button class="btn btn-primary btn-block btn-lg" id="btn-start-game" disabled>
-      Start Game →
-    </button>
+    <div class="device-actions">
+      <button class="btn btn-spotify btn-block" id="btn-open-spotify">Open Spotify</button>
+      <button class="btn btn-outline btn-block" id="btn-check-devices">Check Again</button>
+    </div>
+
+    <div class="how-to-steps">
+      <div class="how-step">
+        <span class="how-step-n">01</span>
+        <span class="how-step-text">Tap <strong>Open Spotify</strong> to launch the Spotify app</span>
+      </div>
+      <div class="how-step">
+        <span class="how-step-n">02</span>
+        <span class="how-step-text">In Spotify, tap play on <strong>any song</strong> briefly</span>
+      </div>
+      <div class="how-step">
+        <span class="how-step-n">03</span>
+        <span class="how-step-text"><strong>Come back here</strong> and tap Check Again</span>
+      </div>
+    </div>
+
+    <div id="device-list" class="device-list-section"></div>
+  </div>
+  <div class="screen-footer">
+    <button class="btn btn-dark btn-lg btn-block" id="btn-start-game" disabled>Start Game →</button>
   </div>
 </div>
 
 <!-- ==================== GAME ==================== -->
 <div class="screen" id="screen-game">
 
-  <!-- Header -->
-  <div class="game-header">
-    <div class="game-top-row">
-      <div>
-        <div class="current-player-label">Now Playing</div>
-        <div class="current-player-name" id="current-player-name">Player 1's turn</div>
-      </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-        <div class="player-tokens" id="player-tokens"></div>
-        <div style="font-size:11px;color:var(--text-muted)" id="token-count-label">3 tokens</div>
-      </div>
+  <!-- Top bar: player + score + tokens -->
+  <div class="game-topbar">
+    <div class="game-player-info">
+      <div class="game-turn-label">Now Playing</div>
+      <div class="game-player-name" id="current-player-name">Player 1</div>
     </div>
-    <div class="score-bar" id="score-bar"></div>
-    <div class="score-label" id="score-label">0 / 10 songs</div>
-    <div class="player-tabs" id="player-tabs"></div>
+    <div class="game-score-tokens">
+      <div class="score-dots" id="score-bar"></div>
+      <div class="token-pips" id="player-tokens"></div>
+      <div style="font-size:10px;color:var(--g-text-2);text-align:right" id="token-count-label"></div>
+    </div>
+    <button style="background:none;border:none;color:var(--g-text-2);font-size:20px;cursor:pointer;padding:4px;align-self:flex-start"
+            id="btn-game-menu">✕</button>
+  </div>
 
-    <button class="header-btn" id="btn-game-menu"
-            style="position:absolute;top:calc(var(--safe-top) + 8px);right:16px;font-size:18px">
-      ✕
+  <!-- Player rail tabs -->
+  <div class="player-rail" id="player-rail"></div>
+
+  <!-- Main game area -->
+  <div class="game-main">
+    <div class="song-area">
+
+      <!-- Album art -->
+      <div class="song-art">
+        <img id="song-art-img" src="" alt="" class="hidden">
+        <div class="art-veil" id="art-blur-overlay">
+          <div class="art-veil-icon">♫</div>
+          <div class="listen-bars" id="playing-indicator">
+            <div class="lbar" style="height:30%"></div>
+            <div class="lbar" style="height:100%"></div>
+            <div class="lbar" style="height:60%"></div>
+            <div class="lbar" style="height:80%"></div>
+          </div>
+          <div class="art-veil-label" id="art-veil-status">Tap play to start</div>
+        </div>
+      </div>
+
+      <!-- Song info (below art) -->
+      <div class="song-info">
+        <!-- Placeholder -->
+        <div class="ph-bars" id="song-hidden-info">
+          <div class="ph-bar w80"></div>
+          <div class="ph-bar w50"></div>
+          <div class="ph-bar w30"></div>
+        </div>
+        <!-- Revealed -->
+        <div class="reveal-info" id="song-reveal-info">
+          <div class="song-title" id="song-title-reveal"></div>
+          <div class="song-artist" id="song-artist-reveal"></div>
+          <div class="year-badge" id="song-year-reveal"></div>
+          <span class="year-badge-label" id="song-album-reveal"></span>
+        </div>
+      </div>
+
+      <!-- Spotify fallback link (shown when API control fails) -->
+      <a id="btn-open-spotify-fallback" href="#" target="_blank" class="spotify-fallback-link">
+        Open track in Spotify app ↗
+      </a>
+
+    </div>
+  </div>
+
+  <!-- Year guess bar (Expert mode only) -->
+  <div class="year-guess-bar" id="year-guess-section">
+    <span class="year-guess-label">Guess year</span>
+    <button class="year-adj" id="btn-year-minus">−</button>
+    <input type="number" id="year-guess-input" value="2000" min="1900" max="2026">
+    <button class="year-adj" id="btn-year-plus">+</button>
+  </div>
+
+  <!-- Playback controls -->
+  <div class="game-controls">
+    <button class="play-ring" id="btn-play" aria-label="Play">▶</button>
+    <button class="reveal-pill" id="btn-reveal" disabled>
+      <span id="reveal-btn-text">Reveal</span>
     </button>
   </div>
 
-  <!-- Main area: song card + controls -->
-  <div class="game-main">
-
-    <!-- Playing indicator -->
-    <div id="playing-indicator" style="display:none">
-      <div class="playing-bars">
-        <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
-      </div>
-      <span class="playing-indicator" style="font-size:11px;letter-spacing:1px">NOW PLAYING</span>
-    </div>
-
-    <!-- Song card -->
-    <div class="song-card">
-      <div class="song-card-art">
-        <img id="song-art-img" src="" alt="" class="hidden">
-        <div class="art-blur-overlay" id="art-blur-overlay">
-          <div class="art-mystery">🎵</div>
-          <div class="art-mystery-text">LISTENING…</div>
-        </div>
-      </div>
-      <div class="song-card-info">
-        <!-- Hidden state (shimmer) -->
-        <div class="song-hidden-info" id="song-hidden-info">
-          <div class="hidden-bar medium"></div>
-          <div class="hidden-bar short"></div>
-          <div class="hidden-bar" style="width:40%;height:28px;border-radius:8px;margin-top:4px"></div>
-        </div>
-        <!-- Revealed state -->
-        <div class="song-reveal-info" id="song-reveal-info">
-          <div class="song-title" id="song-title-reveal">Song Title</div>
-          <div class="song-artist" id="song-artist-reveal">Artist</div>
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <div class="song-year" id="song-year-reveal">2000</div>
-            <div style="font-size:12px;color:var(--text-muted)" id="song-album-reveal"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Playback controls -->
-    <div class="playback-controls">
-      <button class="play-btn" id="btn-play" aria-label="Play/Pause">▶</button>
-      <button class="reveal-btn" id="btn-reveal" disabled>
-        <span id="reveal-btn-text">👁 Reveal Song</span>
-      </button>
-    </div>
-
-    <!-- Spotify fallback link -->
-    <a id="btn-open-spotify-fallback" href="#" target="_blank"
-       class="btn btn-spotify btn-sm" style="display:none">
-      Open track in Spotify ↗
-    </a>
-
-  </div>
-
   <!-- Footer actions -->
-  <div class="game-footer">
-
-    <!-- Expert: year guess -->
-    <div class="year-guess-section" id="year-guess-section">
-      <div class="year-guess-label">🎯 Guess the year (before revealing):</div>
-      <div class="year-guess-input">
-        <button class="year-adj" id="btn-year-minus">−</button>
-        <input type="number" class="year-input" id="year-guess-input" value="2000" min="1900" max="2025">
-        <button class="year-adj" id="btn-year-plus">+</button>
-      </div>
-    </div>
-
-    <!-- Pre-reveal actions -->
-    <div class="game-actions-pre" id="game-actions-pre">
-      <button class="btn btn-ghost btn-sm" id="btn-skip" style="flex:1">
-        ⏭ Skip (−1🪙)
-      </button>
-    </div>
-
-    <!-- Post-reveal actions -->
-    <div class="game-actions-post" id="game-actions-post">
-      <button class="btn btn-warning btn-sm" id="btn-named-it" style="display:none;flex:1">
-        🎤 Named it! +1🪙
-      </button>
-      <button class="btn btn-success" id="btn-correct" style="flex:1;font-size:18px">✓</button>
-      <button class="btn btn-danger" id="btn-wrong" style="flex:1;font-size:18px">✗</button>
-    </div>
-
+  <div class="game-footer" id="game-actions-pre">
+    <button class="btn btn-g-token btn-sm" id="btn-skip" style="flex:1">Skip  −1 token</button>
   </div>
+
+  <div class="game-footer" id="game-actions-post" style="display:none">
+    <button class="btn btn-g-token btn-sm" id="btn-named-it" style="display:none;flex:1">Named it  +1 token</button>
+    <button class="btn btn-g-success" id="btn-correct" style="flex:1;font-size:20px">✓</button>
+    <button class="btn btn-g-danger" id="btn-wrong" style="flex:1;font-size:20px">✗</button>
+  </div>
+
 </div>
 
 <!-- ==================== END ==================== -->
 <div class="screen" id="screen-end">
-  <div class="winner-trophy">🏆</div>
-  <div class="winner-label">Hitster!</div>
-  <div class="winner-name" id="winner-name">Player 1</div>
-
-  <div class="final-scores" id="final-scores"></div>
-
+  <div class="end-trophy">🏆</div>
+  <div class="end-winner-label">Hitster</div>
+  <div class="end-winner-name" id="winner-name"></div>
+  <div class="scores-table" id="final-scores"></div>
   <div class="end-actions">
-    <button class="btn btn-primary btn-lg btn-block" id="btn-play-again">
-      🔄 Play Again (same players)
-    </button>
-    <button class="btn btn-secondary btn-block" id="btn-end-home">
-      🏠 Home
-    </button>
+    <button class="btn btn-dark btn-lg btn-block" id="btn-play-again">Play Again</button>
+    <button class="btn btn-outline btn-block" id="btn-end-home">Home</button>
   </div>
 </div>
 
-<!-- ==================== SCRIPTS ==================== -->
 <script src="./app.js"></script>
 </body>
 </html>

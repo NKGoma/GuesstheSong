@@ -20,44 +20,37 @@ const LS = {
   ACCESS_TOKEN:  'norster_access_token',
   REFRESH_TOKEN: 'norster_refresh_token',
   TOKEN_EXPIRY:  'norster_token_expiry',
-};
-const SS = {
-  CODE_VERIFIER: 'norster_code_verifier',
-  OAUTH_STATE:   'norster_oauth_state',
+  // PKCE — stored in localStorage so Safari keeps them across cross-origin redirects
+  CODE_VERIFIER: 'norster_pkce_verifier',
+  OAUTH_STATE:   'norster_pkce_state',
 };
 
 // ==================== STATE ====================
 let S = {
-  // Auth
   clientId: localStorage.getItem(LS.CLIENT_ID) || '',
   accessToken: localStorage.getItem(LS.ACCESS_TOKEN) || null,
   refreshToken: localStorage.getItem(LS.REFRESH_TOKEN) || null,
   tokenExpiry: parseInt(localStorage.getItem(LS.TOKEN_EXPIRY)) || 0,
 
-  // Playlist
   playlists: [],
   selectedPlaylist: null,
   tracks: [],
   queue: [],
 
-  // Players
-  players: [],          // [{name, tokens, score}]
+  players: [],
   currentPlayerIdx: 0,
   startingTokens: 3,
   difficulty: 'original',
 
-  // Turn
   currentTrack: null,
   revealed: false,
   isPlaying: false,
   songHasPlayed: false,
   yearGuess: null,
 
-  // Device
   selectedDeviceId: null,
   devices: [],
 
-  // Phase
   phase: 'start',
 };
 
@@ -71,50 +64,50 @@ function randomStr(len) {
 
 async function sha256base64url(str) {
   const encoder = new TextEncoder();
-  const data = encoder.encode(str);
-  const digest = await crypto.subtle.digest('SHA-256', data);
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(str));
   return btoa(String.fromCharCode(...new Uint8Array(digest)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 // ==================== AUTH ====================
 async function startAuth() {
-  const verifier = randomStr(128);
+  const verifier  = randomStr(128);
   const challenge = await sha256base64url(verifier);
-  const state = randomStr(16);
+  const state     = randomStr(16);
 
-  sessionStorage.setItem(SS.CODE_VERIFIER, verifier);
-  sessionStorage.setItem(SS.OAUTH_STATE, state);
+  // Use localStorage (not sessionStorage) — Safari clears sessionStorage on cross-origin redirects
+  localStorage.setItem(LS.CODE_VERIFIER, verifier);
+  localStorage.setItem(LS.OAUTH_STATE, state);
 
-  const redirectUri = getRedirectUri();
   const params = new URLSearchParams({
     client_id: S.clientId,
     response_type: 'code',
-    redirect_uri: redirectUri,
+    redirect_uri: getRedirectUri(),
     code_challenge_method: 'S256',
     code_challenge: challenge,
-    state: state,
+    state,
     scope: SCOPES,
-    show_dialog: 'false',
   });
 
   window.location.href = `${SPOTIFY_AUTH}?${params}`;
 }
 
 async function handleOAuthCallback(code, returnedState) {
-  const storedState = sessionStorage.getItem(SS.OAUTH_STATE);
-  const verifier = sessionStorage.getItem(SS.CODE_VERIFIER);
+  const storedState = localStorage.getItem(LS.OAUTH_STATE);
+  const verifier    = localStorage.getItem(LS.CODE_VERIFIER);
 
-  if (returnedState !== storedState) {
-    showToast('Auth state mismatch — please try again', 'error');
+  if (!storedState || returnedState !== storedState) {
+    showToast('Auth state mismatch — tap Connect again', 'error');
     showScreen('start');
+    renderStartScreen();
     return;
   }
 
-  sessionStorage.removeItem(SS.OAUTH_STATE);
-  sessionStorage.removeItem(SS.CODE_VERIFIER);
+  // Clean up PKCE data
+  localStorage.removeItem(LS.OAUTH_STATE);
+  localStorage.removeItem(LS.CODE_VERIFIER);
 
-  // Clean URL
+  // Clean the URL so a page reload doesn't re-trigger the callback
   window.history.replaceState({}, document.title, window.location.pathname);
 
   try {
@@ -129,14 +122,20 @@ async function handleOAuthCallback(code, returnedState) {
         code_verifier: verifier,
       }),
     });
-    if (!res.ok) throw new Error(`Token exchange failed: ${res.status}`);
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error_description || `Token exchange failed (${res.status})`);
+    }
+
     const data = await res.json();
     saveTokens(data);
     await continueAfterAuth();
   } catch (err) {
-    console.error(err);
-    showToast('Login failed. Check your Client ID.', 'error');
+    console.error('OAuth error:', err);
+    showToast(`Login failed: ${err.message}`, 'error');
     showScreen('start');
+    renderStartScreen();
   }
 }
 
@@ -173,20 +172,15 @@ function saveTokens(data) {
 
 async function ensureToken() {
   if (!S.accessToken) return false;
-  if (Date.now() >= S.tokenExpiry) {
-    return await refreshTokens();
-  }
+  if (Date.now() >= S.tokenExpiry) return await refreshTokens();
   return true;
 }
 
 function logout() {
-  localStorage.removeItem(LS.ACCESS_TOKEN);
-  localStorage.removeItem(LS.REFRESH_TOKEN);
-  localStorage.removeItem(LS.TOKEN_EXPIRY);
-  S.accessToken = null;
-  S.refreshToken = null;
-  S.tokenExpiry = 0;
+  [LS.ACCESS_TOKEN, LS.REFRESH_TOKEN, LS.TOKEN_EXPIRY].forEach(k => localStorage.removeItem(k));
+  S.accessToken = null; S.refreshToken = null; S.tokenExpiry = 0;
   showScreen('start');
+  renderStartScreen();
 }
 
 function getRedirectUri() {
@@ -213,13 +207,14 @@ async function spotifyFetch(path, options = {}) {
     return spotifyFetch(path, options);
   }
 
-  if (res.status === 204 || res.status === 202 || res.status === 200 && res.headers.get('content-length') === '0') {
-    return true;
-  }
+  if (res.status === 204 || res.status === 202) return true;
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `HTTP ${res.status}`);
+    const body = await res.json().catch(() => ({}));
+    const msg = body?.error?.message || body?.error_description || `HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
 
   const ct = res.headers.get('content-type') || '';
@@ -233,50 +228,39 @@ async function fetchAllPlaylists() {
     const data = await spotifyFetch(url);
     if (!data) break;
     items = items.concat(data.items || []);
-    // Extract relative path from next URL
     if (data.next) {
-      const nextUrl = new URL(data.next);
-      url = nextUrl.pathname.replace('/v1', '') + nextUrl.search;
-    } else {
-      url = null;
-    }
+      const u = new URL(data.next);
+      url = u.pathname.replace('/v1', '') + u.search;
+    } else url = null;
   }
   return items.filter(p => p && p.id);
 }
 
 async function fetchPlaylistTracks(playlistId) {
   let items = [];
-  let url = `/playlists/${playlistId}/tracks?limit=100&fields=next,items(track(id,name,uri,is_local,duration_ms,artists,album(name,release_date,release_date_precision,images)))`;
+  let url = `/playlists/${playlistId}/tracks?limit=100&fields=next,items(track(id,name,uri,is_local,artists,album(name,release_date,images)))`;
   while (url) {
     const data = await spotifyFetch(url);
     if (!data) break;
     items = items.concat(data.items || []);
     if (data.next) {
-      const nextUrl = new URL(data.next);
-      url = nextUrl.pathname.replace('/v1', '') + nextUrl.search;
-    } else {
-      url = null;
-    }
+      const u = new URL(data.next);
+      url = u.pathname.replace('/v1', '') + u.search;
+    } else url = null;
   }
-  // Process and filter
-  return items
-    .map(item => {
-      const t = item?.track;
-      if (!t || t.is_local || !t.id || !t.uri) return null;
-      const releaseDate = t.album?.release_date || '';
-      const year = releaseDate ? parseInt(releaseDate.substring(0, 4)) : null;
-      if (!year || isNaN(year) || year < 1900 || year > new Date().getFullYear()) return null;
-      return {
-        id: t.id,
-        name: t.name,
-        artist: (t.artists || []).map(a => a.name).join(', '),
-        year,
-        uri: t.uri,
-        album: t.album?.name || '',
-        art: t.album?.images?.[0]?.url || null,
-      };
-    })
-    .filter(Boolean);
+  return items.map(item => {
+    const t = item?.track;
+    if (!t || t.is_local || !t.id) return null;
+    const year = t.album?.release_date ? parseInt(t.album.release_date.substring(0, 4)) : null;
+    if (!year || isNaN(year) || year < 1900 || year > new Date().getFullYear()) return null;
+    return {
+      id: t.id, name: t.name,
+      artist: (t.artists || []).map(a => a.name).join(', '),
+      year, uri: t.uri,
+      album: t.album?.name || '',
+      art: t.album?.images?.[0]?.url || null,
+    };
+  }).filter(Boolean);
 }
 
 async function getDevices() {
@@ -285,27 +269,12 @@ async function getDevices() {
 }
 
 async function playTrack(trackUri, deviceId) {
-  const body = { uris: [trackUri] };
-  const path = deviceId ? `/me/player/play?device_id=${deviceId}` : '/me/player/play';
-  return spotifyFetch(path, {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  });
+  const path = deviceId ? `/me/player/play?device_id=${encodeURIComponent(deviceId)}` : '/me/player/play';
+  return spotifyFetch(path, { method: 'PUT', body: JSON.stringify({ uris: [trackUri] }) });
 }
 
 async function pausePlayback() {
   return spotifyFetch('/me/player/pause', { method: 'PUT' });
-}
-
-async function resumePlayback() {
-  return spotifyFetch('/me/player/play', { method: 'PUT' });
-}
-
-async function transferPlayback(deviceId) {
-  return spotifyFetch('/me/player', {
-    method: 'PUT',
-    body: JSON.stringify({ device_ids: [deviceId], play: false }),
-  });
 }
 
 // ==================== GAME LOGIC ====================
@@ -321,32 +290,22 @@ function shuffleArray(arr) {
 function initGame() {
   S.queue = shuffleArray([...Array(S.tracks.length).keys()]);
   S.currentPlayerIdx = 0;
-  S.revealed = false;
-  S.isPlaying = false;
-  S.songHasPlayed = false;
-  S.currentTrack = null;
-  S.yearGuess = null;
+  S.revealed = S.isPlaying = S.songHasPlayed = false;
+  S.currentTrack = S.yearGuess = null;
   S.players.forEach(p => { p.tokens = S.startingTokens; p.score = 0; });
 }
 
-function currentPlayer() {
-  return S.players[S.currentPlayerIdx];
-}
+function currentPlayer() { return S.players[S.currentPlayerIdx]; }
 
 function drawNextTrack() {
-  if (S.queue.length === 0) {
-    S.queue = shuffleArray([...Array(S.tracks.length).keys()]);
-  }
-  const idx = S.queue.shift();
-  return S.tracks[idx];
+  if (!S.queue.length) S.queue = shuffleArray([...Array(S.tracks.length).keys()]);
+  return S.tracks[S.queue.shift()];
 }
 
 function nextPlayerTurn() {
   S.currentPlayerIdx = (S.currentPlayerIdx + 1) % S.players.length;
   S.currentTrack = null;
-  S.revealed = false;
-  S.isPlaying = false;
-  S.songHasPlayed = false;
+  S.revealed = S.isPlaying = S.songHasPlayed = false;
   S.yearGuess = null;
   renderGameTurn();
 }
@@ -355,7 +314,7 @@ function checkWin() {
   return S.players.find(p => p.score >= WINNING_SCORE) || null;
 }
 
-// ==================== UI SCREENS ====================
+// ==================== SCREEN SYSTEM ====================
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const el = document.getElementById(`screen-${id}`);
@@ -366,15 +325,10 @@ function showScreen(id) {
 // ==================== START SCREEN ====================
 function renderStartScreen() {
   const hasToken = !!S.accessToken && Date.now() < S.tokenExpiry;
-  document.getElementById('btn-new-game').style.display = hasToken ? '' : 'none';
+  document.getElementById('btn-new-game').style.display       = hasToken ? '' : 'none';
   document.getElementById('btn-connect-spotify').style.display = hasToken ? 'none' : '';
-  document.getElementById('btn-setup-client').style.display = '';
-  if (hasToken) {
-    document.getElementById('user-status').textContent = 'Connected to Spotify';
-    document.getElementById('user-status').style.color = 'var(--spotify)';
-  } else {
-    document.getElementById('user-status').textContent = '';
-  }
+  const status = document.getElementById('user-status');
+  status.textContent = hasToken ? '● Connected to Spotify' : '';
 }
 
 // ==================== CONFIG SCREEN ====================
@@ -388,7 +342,7 @@ function saveClientId() {
   if (!val) { showToast('Please enter a Client ID', 'error'); return; }
   S.clientId = val;
   localStorage.setItem(LS.CLIENT_ID, val);
-  showToast('Client ID saved!', 'success');
+  showToast('Saved!', 'success');
   showScreen('start');
   renderStartScreen();
 }
@@ -397,42 +351,40 @@ function saveClientId() {
 async function loadPlaylists() {
   showScreen('playlists');
   const grid = document.getElementById('playlist-grid');
-  grid.innerHTML = `<div class="loading-state"><div class="spinner"></div><p>Loading your playlists…</p></div>`;
+  grid.innerHTML = `<div class="loading-center"><div class="spinner"></div>Loading playlists…</div>`;
 
   try {
     S.playlists = await fetchAllPlaylists();
     renderPlaylistGrid();
   } catch (err) {
     console.error(err);
-    grid.innerHTML = `<div class="loading-state"><p style="color:var(--danger)">Failed to load playlists. ${err.message}</p></div>`;
+    grid.innerHTML = `<div class="loading-center" style="color:var(--text)">${err.message}</div>`;
   }
 }
 
 function renderPlaylistGrid() {
   const grid = document.getElementById('playlist-grid');
   if (!S.playlists.length) {
-    grid.innerHTML = `<div class="loading-state"><p>No playlists found.</p></div>`;
+    grid.innerHTML = `<div class="loading-center">No playlists found.</div>`;
     return;
   }
   grid.className = 'playlist-grid';
   grid.innerHTML = S.playlists.map(p => {
     const img = p.images?.[0]?.url;
-    const art = img
-      ? `<img src="${img}" alt="" loading="lazy">`
-      : `<div class="playlist-art-fallback">🎵</div>`;
+    const art = img ? `<img src="${img}" alt="" loading="lazy">` : '🎵';
     return `
-      <div class="playlist-card" data-id="${p.id}">
-        <div class="playlist-art">${art}</div>
-        <div class="playlist-info">
-          <div class="playlist-name">${escHtml(p.name)}</div>
-          <div class="playlist-count">${p.tracks?.total || '?'} songs</div>
+      <div class="playlist-tile" data-id="${p.id}">
+        <div class="playlist-tile-art">${art}</div>
+        <div class="playlist-tile-info">
+          <div class="playlist-tile-name">${escHtml(p.name)}</div>
+          <div class="playlist-tile-count">${p.tracks?.total ?? '?'} songs</div>
         </div>
       </div>`;
   }).join('');
 
-  grid.querySelectorAll('.playlist-card').forEach(card => {
-    card.addEventListener('click', () => selectPlaylist(card.dataset.id));
-  });
+  grid.querySelectorAll('.playlist-tile').forEach(el =>
+    el.addEventListener('click', () => selectPlaylist(el.dataset.id))
+  );
 }
 
 async function selectPlaylist(id) {
@@ -445,7 +397,7 @@ async function selectPlaylist(id) {
   try {
     S.tracks = await fetchPlaylistTracks(id);
     if (S.tracks.length < 5) {
-      showToast('Not enough songs with years in this playlist (need 5+)', 'error');
+      showToast('Need at least 5 songs with release years in this playlist', 'error');
       await loadPlaylists();
       return;
     }
@@ -453,43 +405,49 @@ async function selectPlaylist(id) {
     renderPlayersScreen();
   } catch (err) {
     console.error(err);
-    showToast(`Failed to load tracks: ${err.message}`, 'error');
+    showToast(`Could not load tracks: ${err.message}`, 'error');
     await loadPlaylists();
   }
 }
 
-// ==================== PLAYERS SCREEN ====================
+// ==================== PLAYER SETUP ====================
 function renderPlayersScreen() {
   document.getElementById('selected-playlist-name').textContent = S.selectedPlaylist?.name || '';
-  document.getElementById('selected-track-count').textContent = `${S.tracks.length} songs with years`;
+  document.getElementById('selected-track-count').textContent   = `${S.tracks.length} songs with years`;
+
+  // Show art in pill
+  const pilArt = document.getElementById('pill-art');
+  const imgUrl = S.selectedPlaylist?.images?.[0]?.url;
+  pilArt.innerHTML = imgUrl ? `<img src="${imgUrl}" alt="">` : '🎵';
+
   renderPlayerList();
   renderDifficultyOptions();
   updateTokenDisplay();
 }
 
 function renderPlayerList() {
-  const list = document.getElementById('player-list');
-  list.innerHTML = S.players.map((p, i) => `
-    <div class="player-item">
-      <div class="player-avatar">${(p.name || 'P').charAt(0).toUpperCase()}</div>
+  document.getElementById('player-list').innerHTML = S.players.map((p, i) => `
+    <div class="player-row">
+      <div class="player-initial">${(p.name || 'P').charAt(0).toUpperCase()}</div>
       <input type="text" value="${escHtml(p.name)}" placeholder="Player ${i + 1}"
              data-idx="${i}" class="player-name-input" maxlength="20">
-      <button class="player-remove" data-idx="${i}" aria-label="Remove">✕</button>
+      <button class="player-row-remove" data-idx="${i}">✕</button>
     </div>
   `).join('');
 
-  list.querySelectorAll('.player-name-input').forEach(inp => {
+  document.querySelectorAll('.player-name-input').forEach(inp =>
     inp.addEventListener('input', e => {
-      S.players[+e.target.dataset.idx].name = e.target.value.trim() || `Player ${+e.target.dataset.idx + 1}`;
-    });
-  });
-  list.querySelectorAll('.player-remove').forEach(btn => {
+      S.players[+e.target.dataset.idx].name =
+        e.target.value.trim() || `Player ${+e.target.dataset.idx + 1}`;
+    })
+  );
+  document.querySelectorAll('.player-row-remove').forEach(btn =>
     btn.addEventListener('click', e => {
       if (S.players.length <= 2) { showToast('Minimum 2 players', 'error'); return; }
       S.players.splice(+e.target.dataset.idx, 1);
       renderPlayerList();
-    });
-  });
+    })
+  );
 }
 
 function addPlayer() {
@@ -499,27 +457,24 @@ function addPlayer() {
 }
 
 function renderDifficultyOptions() {
-  const diffs = {
-    original: { emoji: '🎯', label: 'Original', desc: 'Place songs in chronological order' },
-    pro:      { emoji: '⭐', label: 'Pro', desc: 'Also name the artist & title for a token bonus' },
-    expert:   { emoji: '🔥', label: 'Expert', desc: 'Also guess the exact year for a token bonus' },
+  const opts = {
+    original: { label: 'Original', desc: 'Place songs in chronological order' },
+    pro:      { label: 'Pro',      desc: 'Also name the artist & title for +1 token' },
+    expert:   { label: 'Expert',   desc: 'Also guess the exact year for +1 token' },
   };
-  const container = document.getElementById('difficulty-options');
-  container.innerHTML = Object.entries(diffs).map(([key, d]) => `
-    <div class="difficulty-option ${S.difficulty === key ? 'selected' : ''}" data-diff="${key}">
-      <span class="diff-emoji">${d.emoji}</span>
-      <div class="diff-info">
-        <h3>${d.label}</h3>
-        <p>${d.desc}</p>
+  document.getElementById('difficulty-options').innerHTML = Object.entries(opts).map(([k, d]) => `
+    <div class="diff-row ${S.difficulty === k ? 'selected' : ''}" data-diff="${k}">
+      <div class="diff-row-check"><div class="diff-row-check-dot"></div></div>
+      <div>
+        <div class="diff-row-label">${d.label}</div>
+        <div class="diff-row-desc">${d.desc}</div>
       </div>
     </div>
   `).join('');
-  container.querySelectorAll('.difficulty-option').forEach(el => {
-    el.addEventListener('click', () => {
-      S.difficulty = el.dataset.diff;
-      renderDifficultyOptions();
-    });
-  });
+
+  document.querySelectorAll('.diff-row').forEach(el =>
+    el.addEventListener('click', () => { S.difficulty = el.dataset.diff; renderDifficultyOptions(); })
+  );
 }
 
 function updateTokenDisplay() {
@@ -532,12 +487,9 @@ function changeTokens(delta) {
 }
 
 function startGame() {
-  // Validate player names
   S.players = S.players.map((p, i) => ({
-    ...p,
-    name: p.name.trim() || `Player ${i + 1}`,
-    tokens: S.startingTokens,
-    score: 0,
+    ...p, name: p.name.trim() || `Player ${i + 1}`,
+    tokens: S.startingTokens, score: 0,
   }));
   initGame();
   showScreen('device');
@@ -545,81 +497,68 @@ function startGame() {
 }
 
 // ==================== DEVICE SCREEN ====================
-let devicePollInterval = null;
-
 async function loadDevices() {
-  renderDeviceScreen('loading');
+  renderDeviceStatus('loading');
   try {
     S.devices = await getDevices();
-    renderDeviceScreen('ready');
-  } catch (err) {
-    renderDeviceScreen('error');
+    renderDeviceStatus('ready');
+  } catch {
+    renderDeviceStatus('error');
   }
 }
 
-function renderDeviceScreen(state) {
-  const status = document.getElementById('device-status');
-  const list = document.getElementById('device-list');
-  const startBtn = document.getElementById('btn-start-game');
+function renderDeviceStatus(state) {
+  const statusEl  = document.getElementById('device-status');
+  const listEl    = document.getElementById('device-list');
+  const startBtn  = document.getElementById('btn-start-game');
 
   if (state === 'loading') {
-    status.innerHTML = `<div class="device-icon">📱</div><h2>Finding Spotify</h2><p>Looking for active Spotify devices…</p>`;
-    list.innerHTML = `<div class="loading-state" style="padding:20px"><div class="spinner"></div></div>`;
+    statusEl.innerHTML = `<div class="device-hero-icon">📱</div><h1>Searching…</h1><p>Looking for active Spotify devices.</p>`;
+    listEl.innerHTML = '';
     if (startBtn) startBtn.disabled = true;
     return;
   }
-
   if (state === 'error') {
-    status.innerHTML = `<div class="device-icon">⚠️</div><h2>Connection issue</h2><p>Could not reach Spotify. Check your internet and try again.</p>`;
-    list.innerHTML = '';
+    statusEl.innerHTML = `<div class="device-hero-icon">⚠️</div><h1>Connection error</h1><p>Could not reach Spotify. Check your internet and try again.</p>`;
+    listEl.innerHTML = '';
     if (startBtn) startBtn.disabled = true;
     return;
   }
 
-  const activeDevices = S.devices.filter(d => d);
-  if (activeDevices.length === 0) {
-    status.innerHTML = `<div class="device-icon">🎵</div><h2>Open Spotify</h2><p>No active devices found. Open the Spotify app and play any song, then come back and tap <strong>Check Again</strong>.</p>`;
-    list.innerHTML = '';
+  const devices = S.devices.filter(Boolean);
+  if (!devices.length) {
+    statusEl.innerHTML = `<div class="device-hero-icon">🎵</div><h1>No devices found</h1><p>Open Spotify, play anything for a second, then tap Check Again.</p>`;
+    listEl.innerHTML = '';
     if (startBtn) startBtn.disabled = true;
     S.selectedDeviceId = null;
     return;
   }
 
-  status.innerHTML = `<div class="device-icon">✅</div><h2>Spotify Found</h2><p>Select the device where music should play:</p>`;
-
-  list.innerHTML = activeDevices.map(d => {
-    const icons = { Computer: '💻', Smartphone: '📱', Speaker: '🔊', Tablet: '📟' };
-    const icon = icons[d.type] || '🎵';
-    const sel = S.selectedDeviceId === d.id ? 'selected' : '';
-    return `
-      <div class="device-item ${sel}" data-id="${d.id}">
-        <span class="device-type">${icon}</span>
-        <span class="device-name">${escHtml(d.name)}</span>
-        ${d.is_active ? '<span class="device-active">Active</span>' : ''}
-        ${sel ? '<span class="check-icon">✓</span>' : ''}
-      </div>`;
-  }).join('');
-
-  // Auto-select active device
+  // Auto-select the active device
   if (!S.selectedDeviceId) {
-    const active = activeDevices.find(d => d.is_active) || activeDevices[0];
-    S.selectedDeviceId = active.id;
-    renderDeviceScreen('ready');
-    return;
+    S.selectedDeviceId = (devices.find(d => d.is_active) || devices[0]).id;
   }
 
-  list.querySelectorAll('.device-item').forEach(el => {
-    el.addEventListener('click', () => {
-      S.selectedDeviceId = el.dataset.id;
-      renderDeviceScreen('ready');
-    });
-  });
+  statusEl.innerHTML = `<div class="device-hero-icon">✅</div><h1>Spotify found</h1><p>Select where to play music:</p>`;
+
+  const icons = { Computer: '💻', Smartphone: '📱', Speaker: '🔊', Tablet: '📟' };
+  listEl.innerHTML = devices.map(d => `
+    <div class="device-item ${S.selectedDeviceId === d.id ? 'selected' : ''}" data-id="${d.id}">
+      <span class="device-icon-cell">${icons[d.type] || '🎵'}</span>
+      <span class="device-name-cell">${escHtml(d.name)}</span>
+      ${d.is_active ? '<span class="device-active-badge">Active</span>' : ''}
+      ${S.selectedDeviceId === d.id ? '<span class="device-check">✓</span>' : ''}
+    </div>
+  `).join('');
+
+  listEl.querySelectorAll('.device-item').forEach(el =>
+    el.addEventListener('click', () => { S.selectedDeviceId = el.dataset.id; renderDeviceStatus('ready'); })
+  );
 
   if (startBtn) startBtn.disabled = !S.selectedDeviceId;
 }
 
 function openSpotifyApp() {
-  // Try to open Spotify app via URI scheme
   window.location.href = 'spotify://';
 }
 
@@ -627,142 +566,170 @@ function openSpotifyApp() {
 function renderGameTurn() {
   const player = currentPlayer();
 
-  // Player tabs
-  renderPlayerTabs();
-
-  // Score bar
-  const scoreBar = document.getElementById('score-bar');
-  const segments = Array.from({ length: WINNING_SCORE }, (_, i) =>
-    `<div class="score-segment ${i < player.score ? 'filled' : ''}"></div>`
-  ).join('');
-  scoreBar.innerHTML = segments;
-  document.getElementById('score-label').textContent = `${player.score} / ${WINNING_SCORE} songs`;
-
-  // Token display
-  renderTokens(player.tokens);
-
-  // Song card — reset to hidden
-  showSongCard(false);
-
-  // Controls
-  document.getElementById('btn-play').disabled = false;
-  document.getElementById('btn-reveal').disabled = true;
-  document.getElementById('reveal-btn-text').textContent = '👁 Reveal Song';
-
-  // Show pre-actions, hide post-actions
-  setPostActions(false);
-
-  // Year guess section
-  const yearSection = document.getElementById('year-guess-section');
-  if (S.difficulty === 'expert') {
-    yearSection.classList.add('visible');
-    S.yearGuess = new Date().getFullYear();
-    document.getElementById('year-guess-input').value = S.yearGuess;
-  } else {
-    yearSection.classList.remove('visible');
-  }
-}
-
-function renderPlayerTabs() {
-  const tabs = document.getElementById('player-tabs');
-  tabs.innerHTML = S.players.map((p, i) => `
-    <div class="player-tab ${i === S.currentPlayerIdx ? 'active' : ''}">
-      <span class="player-tab-name">${escHtml(p.name.split(' ')[0])}</span>
-      <span class="player-tab-score">${p.score}🎵</span>
+  // Player rail
+  document.getElementById('player-rail').innerHTML = S.players.map((p, i) => `
+    <div class="player-rail-tab ${i === S.currentPlayerIdx ? 'active' : ''}">
+      <span class="prt-name">${escHtml(p.name.split(' ')[0])}</span>
+      <span class="prt-score">${p.score}✦</span>
     </div>
   `).join('');
-  document.getElementById('current-player-name').textContent = currentPlayer().name + "'s turn";
+
+  // Player name
+  document.getElementById('current-player-name').textContent = player.name;
+
+  // Score dots (10 total)
+  document.getElementById('score-bar').innerHTML = Array.from({ length: WINNING_SCORE }, (_, i) =>
+    `<div class="score-dot ${i < player.score ? 'on' : ''}"></div>`
+  ).join('');
+
+  // Token pips
+  renderTokens(player.tokens);
+
+  // Reset song card
+  resetSongCard();
+
+  // Controls
+  document.getElementById('btn-play').textContent = '▶';
+  document.getElementById('btn-play').disabled = false;
+  document.getElementById('btn-reveal').disabled = true;
+  document.getElementById('reveal-btn-text').textContent = 'Reveal';
+
+  // Footer: show skip, hide correct/wrong
+  setPostActions(false);
+
+  // Expert year guess bar
+  const yBar = document.getElementById('year-guess-section');
+  if (S.difficulty === 'expert') {
+    yBar.classList.add('on');
+    document.getElementById('year-guess-input').value = new Date().getFullYear();
+  } else {
+    yBar.classList.remove('on');
+  }
+
+  // Playing indicator off
+  document.getElementById('playing-indicator').classList.remove('on');
+  document.getElementById('art-veil-status').textContent = 'Tap play to start';
 }
 
 function renderTokens(count) {
-  const container = document.getElementById('player-tokens');
   const max = Math.max(count, S.startingTokens);
-  container.innerHTML = Array.from({ length: max }, (_, i) =>
-    `<div class="token-dot ${i < count ? '' : 'empty'}"></div>`
+  document.getElementById('player-tokens').innerHTML = Array.from({ length: max }, (_, i) =>
+    `<div class="token-pip ${i < count ? 'on' : ''}"></div>`
   ).join('');
   document.getElementById('token-count-label').textContent = `${count} token${count !== 1 ? 's' : ''}`;
 }
 
+function resetSongCard() {
+  const artImg    = document.getElementById('song-art-img');
+  const veil      = document.getElementById('art-blur-overlay');
+  const phBars    = document.getElementById('song-hidden-info');
+  const revInfo   = document.getElementById('song-reveal-info');
+  const fallback  = document.getElementById('btn-open-spotify-fallback');
+
+  artImg.src = '';
+  artImg.classList.add('hidden');
+  veil.classList.remove('gone');
+  phBars.classList.remove('off');
+  revInfo.classList.remove('on');
+  if (fallback) fallback.style.display = 'none';
+}
+
 function showSongCard(revealed) {
-  const hiddenOverlay = document.getElementById('art-blur-overlay');
-  const artImg = document.getElementById('song-art-img');
-  const hiddenInfo = document.getElementById('song-hidden-info');
-  const revealInfo = document.getElementById('song-reveal-info');
-  const track = S.currentTrack;
+  const track   = S.currentTrack;
+  const artImg  = document.getElementById('song-art-img');
+  const veil    = document.getElementById('art-blur-overlay');
+  const phBars  = document.getElementById('song-hidden-info');
+  const revInfo = document.getElementById('song-reveal-info');
 
   if (!revealed || !track) {
-    hiddenOverlay.classList.remove('hidden');
-    artImg.classList.add('hidden');
-    hiddenInfo.classList.remove('hidden');
-    revealInfo.classList.remove('visible');
-    artImg.src = '';
-  } else {
-    // Show real info
-    if (track.art) {
-      artImg.src = track.art;
-      artImg.classList.remove('hidden');
-      hiddenOverlay.classList.add('hidden');
-    } else {
-      artImg.classList.add('hidden');
-      hiddenOverlay.classList.remove('hidden');
-      hiddenOverlay.innerHTML = `<div class="art-mystery">🎵</div>`;
-    }
-    hiddenInfo.classList.add('hidden');
-    revealInfo.classList.add('visible');
-    document.getElementById('song-title-reveal').textContent = track.name;
-    document.getElementById('song-artist-reveal').textContent = track.artist;
-    document.getElementById('song-year-reveal').textContent = track.year;
-    document.getElementById('song-album-reveal').textContent = track.album;
+    resetSongCard();
+    return;
   }
+
+  // Show album art
+  if (track.art) {
+    artImg.src = track.art;
+    artImg.classList.remove('hidden');
+    veil.classList.add('gone');
+  }
+
+  // Show text info
+  phBars.classList.add('off');
+  revInfo.classList.add('on');
+  document.getElementById('song-title-reveal').textContent  = track.name;
+  document.getElementById('song-artist-reveal').textContent = track.artist;
+  document.getElementById('song-year-reveal').textContent   = track.year;
+  document.getElementById('song-album-reveal').textContent  = track.album;
 }
 
 function setPostActions(show) {
-  const pre = document.getElementById('game-actions-pre');
-  const post = document.getElementById('game-actions-post');
-  if (show) {
-    pre.classList.add('hidden');
-    post.classList.add('visible');
-  } else {
-    pre.classList.remove('hidden');
-    post.classList.remove('visible');
-  }
+  document.getElementById('game-actions-pre').style.display  = show ? 'none' : 'flex';
+  document.getElementById('game-actions-post').style.display = show ? 'flex' : 'none';
 }
 
 // ==================== TURN ACTIONS ====================
 async function handlePlayPause() {
-  const btn = document.getElementById('btn-play');
+  const btn       = document.getElementById('btn-play');
+  const indicator = document.getElementById('playing-indicator');
+  const veilLabel = document.getElementById('art-veil-status');
+
+  // Pause
   if (S.isPlaying) {
-    // Pause
     btn.textContent = '▶';
-    document.getElementById('playing-indicator').style.display = 'none';
     S.isPlaying = false;
+    indicator.classList.remove('on');
+    veilLabel.textContent = 'Paused — tap to resume';
     try { await pausePlayback(); } catch {}
     return;
   }
 
-  // Pick a track if none
+  // Pick track on first play
   if (!S.currentTrack) {
     S.currentTrack = drawNextTrack();
-    if (!S.currentTrack) { showToast('No more songs!', 'error'); return; }
+    if (!S.currentTrack) { showToast('No tracks available', 'error'); return; }
   }
 
-  btn.textContent = '⏸';
   btn.disabled = true;
-  document.getElementById('playing-indicator').style.display = 'flex';
+  indicator.classList.add('on');
+  veilLabel.textContent = 'Listening…';
 
   try {
     await playTrack(S.currentTrack.uri, S.selectedDeviceId);
+    btn.textContent = '⏸';
     S.isPlaying = true;
     S.songHasPlayed = true;
     document.getElementById('btn-reveal').disabled = false;
   } catch (err) {
-    showToast(`Playback failed: ${err.message}. Is Spotify Premium active?`, 'error');
-    // Fallback: open Spotify with the track
+    console.error('Playback error:', err);
+    indicator.classList.remove('on');
+    veilLabel.textContent = 'Tap play to start';
+
+    // Friendly error messages based on HTTP status
+    if (err.status === 403) {
+      showToast('Spotify Premium required for remote control', 'error');
+    } else if (err.status === 404) {
+      showToast('Device went inactive — tap Check Again on the device screen', 'error');
+      // Try without specifying a device (use whatever Spotify has active)
+      try {
+        await playTrack(S.currentTrack.uri, null);
+        btn.textContent = '⏸';
+        S.isPlaying = true;
+        S.songHasPlayed = true;
+        document.getElementById('btn-reveal').disabled = false;
+        indicator.classList.add('on');
+        veilLabel.textContent = 'Listening…';
+        btn.disabled = false;
+        return;
+      } catch {}
+    } else {
+      showToast(`Playback failed: ${err.message}`, 'error');
+    }
+
+    // Fallback: open in Spotify directly
     const trackId = S.currentTrack.uri.split(':').pop();
-    document.getElementById('playing-indicator').style.display = 'none';
-    showToast('Tap to open in Spotify app instead', 'info');
-    document.getElementById('btn-open-spotify-fallback').style.display = '';
-    document.getElementById('btn-open-spotify-fallback').href = `https://open.spotify.com/track/${trackId}`;
+    const fallback = document.getElementById('btn-open-spotify-fallback');
+    fallback.href = `https://open.spotify.com/track/${trackId}`;
+    fallback.style.display = 'block';
     document.getElementById('btn-reveal').disabled = false;
     S.songHasPlayed = true;
   } finally {
@@ -773,143 +740,118 @@ async function handlePlayPause() {
 async function handleReveal() {
   if (!S.currentTrack) return;
 
-  // In expert mode, check year guess before revealing
+  // Expert: capture year guess before reveal
   if (S.difficulty === 'expert') {
-    const guess = parseInt(document.getElementById('year-guess-input').value);
-    S.yearGuess = guess;
+    S.yearGuess = parseInt(document.getElementById('year-guess-input').value);
   }
 
-  // Pause playback
+  // Stop playback
   if (S.isPlaying) {
     try { await pausePlayback(); } catch {}
     S.isPlaying = false;
     document.getElementById('btn-play').textContent = '▶';
-    document.getElementById('playing-indicator').style.display = 'none';
+    document.getElementById('playing-indicator').classList.remove('on');
   }
 
   S.revealed = true;
   showSongCard(true);
+  document.getElementById('reveal-btn-text').textContent = 'Revealed';
+  document.getElementById('btn-reveal').disabled = true;
+  setPostActions(true);
 
-  // Check year guess for Expert mode
+  // Expert: was year correct?
   if (S.difficulty === 'expert' && S.yearGuess) {
     if (S.yearGuess === S.currentTrack.year) {
-      const player = currentPlayer();
-      player.tokens = Math.min(5, player.tokens + 1);
-      renderTokens(player.tokens);
-      showToast(`🎯 Exact year! +1 token for ${player.name}`, 'success');
+      currentPlayer().tokens = Math.min(5, currentPlayer().tokens + 1);
+      renderTokens(currentPlayer().tokens);
+      showToast(`Exact year! +1 token for ${currentPlayer().name}`, 'success');
     } else {
       showToast(`Year was ${S.currentTrack.year}`, 'info');
     }
   }
 
-  // Pro mode prompt — handled via post-action buttons with "Named it?" button
-  document.getElementById('reveal-btn-text').textContent = 'Revealed!';
-  document.getElementById('btn-reveal').disabled = true;
-  setPostActions(true);
-
-  // Show "Named it?" button only in pro/expert
+  // Show "Named it?" button only for Pro / Expert
   document.getElementById('btn-named-it').style.display =
-    (S.difficulty === 'pro' || S.difficulty === 'expert') ? '' : 'none';
+    (S.difficulty !== 'original') ? '' : 'none';
 }
 
 function handleNamedIt() {
-  const player = currentPlayer();
-  player.tokens = Math.min(5, player.tokens + 1);
-  renderTokens(player.tokens);
-  showToast(`🎤 +1 token for naming it!`, 'success');
+  const p = currentPlayer();
+  p.tokens = Math.min(5, p.tokens + 1);
+  renderTokens(p.tokens);
+  showToast(`+1 token for naming it!`, 'success');
   document.getElementById('btn-named-it').style.display = 'none';
 }
 
 function handleCorrect() {
-  const player = currentPlayer();
-  player.score++;
-  showToast(`✅ Correct! ${player.name} now has ${player.score} song${player.score !== 1 ? 's' : ''}`, 'success');
-
+  const p = currentPlayer();
+  p.score++;
   const winner = checkWin();
-  if (winner) {
-    showEndScreen(winner);
-    return;
-  }
+  if (winner) { showEndScreen(winner); return; }
+  showToast(`Correct — ${p.name} has ${p.score} song${p.score !== 1 ? 's' : ''}`, 'success');
   nextPlayerTurn();
 }
 
 function handleWrong() {
-  const player = currentPlayer();
-  showToast(`❌ Not quite — discard that one`, 'error');
+  showToast('Not quite — discard that one', 'error');
   nextPlayerTurn();
 }
 
 function handleSkip() {
-  const player = currentPlayer();
-  if (player.tokens < 1) {
-    showToast('Not enough tokens to skip', 'error');
-    return;
-  }
-  player.tokens--;
-  renderTokens(player.tokens);
-  showToast(`⏭ Skipped — 1 token used`, 'info');
-  // Put track back at end of queue, get new one
-  if (S.currentTrack) {
-    // We don't know the index, just discard and move on
-  }
+  const p = currentPlayer();
+  if (p.tokens < 1) { showToast('No tokens left to skip', 'error'); return; }
+  p.tokens--;
   S.currentTrack = null;
-  S.revealed = false;
   S.isPlaying = false;
   S.songHasPlayed = false;
-  if (S.isPlaying) { pausePlayback().catch(() => {}); }
+  try { pausePlayback(); } catch {}
   renderGameTurn();
+  showToast('Skipped — 1 token used', 'info');
 }
 
 // ==================== END SCREEN ====================
 function showEndScreen(winner) {
   showScreen('end');
   document.getElementById('winner-name').textContent = winner.name;
-
   const sorted = [...S.players].sort((a, b) => b.score - a.score);
-  const scoreList = document.getElementById('final-scores');
-  scoreList.innerHTML = sorted.map(p => `
-    <div class="score-row ${p === winner ? 'winner-row' : ''}">
-      <span class="score-player-name">${p === winner ? '🏆 ' : ''}${escHtml(p.name)}</span>
-      <span class="score-player-score">${p.score}</span>
+  document.getElementById('final-scores').innerHTML = sorted.map(p => `
+    <div class="score-row ${p === winner ? 'top' : ''}">
+      <span class="score-row-name">${p === winner ? '🏆 ' : ''}${escHtml(p.name)}</span>
+      <span class="score-row-num">${p.score}</span>
     </div>
   `).join('');
 }
 
 // ==================== TOASTS ====================
 function showToast(msg, type = 'info') {
-  const container = document.getElementById('toast-container');
-  const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  toast.textContent = msg;
-  container.appendChild(toast);
-  setTimeout(() => toast.remove(), 3200);
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3300);
 }
 
-// ==================== UTILITIES ====================
+// ==================== UTILS ====================
 function escHtml(str) {
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 async function continueAfterAuth() {
   await loadPlaylists();
 }
 
-// ==================== INIT ====================
+// ==================== BOOT ====================
 async function init() {
-  // Register service worker
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
 
-  // Check for OAuth callback
   const params = new URLSearchParams(window.location.search);
-  const code = params.get('code');
-  const error = params.get('error');
-  const state = params.get('state');
+  const code   = params.get('code');
+  const error  = params.get('error');
+  const state  = params.get('state');
 
   if (error) {
     window.history.replaceState({}, document.title, window.location.pathname);
@@ -924,21 +866,18 @@ async function init() {
     return;
   }
 
-  // Normal start
+  // Try to restore from stored token
   if (S.accessToken && Date.now() < S.tokenExpiry) {
-    showScreen('start');
-    renderStartScreen();
+    // Good token
   } else if (S.refreshToken) {
-    const ok = await refreshTokens();
-    showScreen('start');
-    renderStartScreen();
-  } else {
-    showScreen('start');
-    renderStartScreen();
+    await refreshTokens();
   }
 
+  showScreen('start');
+  renderStartScreen();
+
   // Default players
-  if (S.players.length === 0) {
+  if (!S.players.length) {
     S.players = [
       { name: 'Player 1', tokens: 3, score: 0 },
       { name: 'Player 2', tokens: 3, score: 0 },
@@ -952,46 +891,32 @@ function bindEvents() {
   // Start screen
   document.getElementById('btn-connect-spotify').addEventListener('click', () => {
     if (!S.clientId) {
-      showToast('Set your Spotify Client ID first', 'error');
-      showScreen('config');
-      renderConfigScreen();
-      return;
+      showToast('Enter your Spotify Client ID first', 'error');
+      showScreen('config'); renderConfigScreen(); return;
     }
     startAuth();
   });
-
-  document.getElementById('btn-new-game').addEventListener('click', async () => {
-    await loadPlaylists();
-  });
-
-  document.getElementById('btn-setup-client').addEventListener('click', () => {
-    showScreen('config');
-    renderConfigScreen();
-  });
-
+  document.getElementById('btn-new-game').addEventListener('click', () => loadPlaylists());
+  document.getElementById('btn-setup-client').addEventListener('click', () => { showScreen('config'); renderConfigScreen(); });
   document.getElementById('btn-logout').addEventListener('click', () => {
-    if (confirm('Disconnect Spotify and return to start?')) logout();
+    if (confirm('Disconnect Spotify?')) logout();
   });
 
-  // Config screen
+  // Config
   document.getElementById('btn-save-client-id').addEventListener('click', saveClientId);
-  document.getElementById('btn-config-back').addEventListener('click', () => {
-    showScreen('start'); renderStartScreen();
-  });
+  document.getElementById('btn-config-back').addEventListener('click', () => { showScreen('start'); renderStartScreen(); });
 
-  // Playlist screen
-  document.getElementById('btn-playlists-back').addEventListener('click', () => {
-    showScreen('start'); renderStartScreen();
-  });
+  // Playlists
+  document.getElementById('btn-playlists-back').addEventListener('click', () => { showScreen('start'); renderStartScreen(); });
 
-  // Players screen
+  // Player setup
   document.getElementById('btn-add-player').addEventListener('click', addPlayer);
   document.getElementById('btn-players-back').addEventListener('click', () => loadPlaylists());
   document.getElementById('btn-start-game-setup').addEventListener('click', startGame);
   document.getElementById('btn-token-minus').addEventListener('click', () => changeTokens(-1));
-  document.getElementById('btn-token-plus').addEventListener('click', () => changeTokens(1));
+  document.getElementById('btn-token-plus').addEventListener('click',  () => changeTokens(+1));
 
-  // Device screen
+  // Device
   document.getElementById('btn-open-spotify').addEventListener('click', openSpotifyApp);
   document.getElementById('btn-check-devices').addEventListener('click', loadDevices);
   document.getElementById('btn-start-game').addEventListener('click', () => {
@@ -999,11 +924,9 @@ function bindEvents() {
     showScreen('game');
     renderGameTurn();
   });
-  document.getElementById('btn-device-back').addEventListener('click', () => {
-    showScreen('players'); renderPlayersScreen();
-  });
+  document.getElementById('btn-device-back').addEventListener('click', () => { showScreen('players'); renderPlayersScreen(); });
 
-  // Game screen
+  // Game
   document.getElementById('btn-play').addEventListener('click', handlePlayPause);
   document.getElementById('btn-reveal').addEventListener('click', handleReveal);
   document.getElementById('btn-correct').addEventListener('click', handleCorrect);
@@ -1011,13 +934,13 @@ function bindEvents() {
   document.getElementById('btn-skip').addEventListener('click', handleSkip);
   document.getElementById('btn-named-it').addEventListener('click', handleNamedIt);
   document.getElementById('btn-game-menu').addEventListener('click', () => {
-    if (confirm('End game and return to start?')) {
+    if (confirm('End game and go home?')) {
       if (S.isPlaying) pausePlayback().catch(() => {});
       showScreen('start'); renderStartScreen();
     }
   });
 
-  // Year guess controls
+  // Expert year guess
   document.getElementById('btn-year-minus').addEventListener('click', () => {
     const inp = document.getElementById('year-guess-input');
     inp.value = Math.max(1900, +inp.value - 1);
@@ -1027,16 +950,11 @@ function bindEvents() {
     inp.value = Math.min(new Date().getFullYear(), +inp.value + 1);
   });
 
-  // End screen
+  // End
   document.getElementById('btn-play-again').addEventListener('click', () => {
-    initGame();
-    showScreen('game');
-    renderGameTurn();
+    initGame(); showScreen('game'); renderGameTurn();
   });
-  document.getElementById('btn-end-home').addEventListener('click', () => {
-    showScreen('start'); renderStartScreen();
-  });
+  document.getElementById('btn-end-home').addEventListener('click', () => { showScreen('start'); renderStartScreen(); });
 }
 
-// ==================== BOOT ====================
 document.addEventListener('DOMContentLoaded', init);
