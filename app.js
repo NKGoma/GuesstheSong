@@ -143,18 +143,16 @@ async function handleOAuthCallback(code, returnedState) {
       }),
     });
 
-    // Rate-limited on the token endpoint — wait and retry (keep PKCE data for the retry)
-    if (res.status === 429) {
-      const wait = Math.max(parseInt(res.headers.get('Retry-After') || '10'), 5);
-      document.getElementById('loading-playlist-name').textContent =
-        `Spotify rate limit — retrying in ${wait}s…`;
-      await new Promise(r => setTimeout(r, wait * 1000));
-      return handleOAuthCallback(code, returnedState);
-    }
-
-    // Clean up PKCE data — auth code is single-use so no retry possible after this
+    // Clean up PKCE data — auth code is single-use
     localStorage.removeItem(LS.OAUTH_STATE);
     localStorage.removeItem(LS.CODE_VERIFIER);
+
+    if (res.status === 429) {
+      showAuthError('Spotify is rate-limiting this app. Please wait a few minutes, then tap Connect Spotify again.');
+      showScreen('start');
+      renderStartScreen();
+      return;
+    }
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -194,12 +192,6 @@ async function refreshTokens() {
         refresh_token: S.refreshToken,
       }),
     });
-    if (res.status === 429) {
-      const wait = Math.max(parseInt(res.headers.get('Retry-After') || '10'), 5);
-      showToast(`Spotify rate limit — retrying token refresh in ${wait}s…`, 'error');
-      await new Promise(r => setTimeout(r, wait * 1000));
-      return refreshTokens();
-    }
     if (!res.ok) return false;
     const data = await res.json();
     saveTokens(data);
@@ -259,12 +251,10 @@ async function spotifyFetch(path, options = {}) {
     return spotifyFetch(path, options);
   }
 
-  // Rate-limited: wait for Retry-After then retry once
-  if (res.status === 429 && !options._retried) {
-    const wait = Math.max(parseInt(res.headers.get('Retry-After') || '10'), 5);
-    showToast(`Spotify rate limit — retrying in ${wait}s…`, 'error');
-    await new Promise(r => setTimeout(r, wait * 1000));
-    return spotifyFetch(path, { ...options, _retried: true });
+  if (res.status === 429) {
+    const wait = res.headers.get('Retry-After');
+    const msg = wait ? `Rate limited by Spotify. Wait ${wait}s then try again.` : 'Rate limited by Spotify. Please wait a few minutes then try again.';
+    throw Object.assign(new Error(msg), { status: 429 });
   }
 
   if (res.status === 204 || res.status === 202) return true;
