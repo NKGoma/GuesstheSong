@@ -143,16 +143,25 @@ async function handleOAuthCallback(code, returnedState) {
       }),
     });
 
-    // Clean up PKCE data only after a successful exchange attempt
+    // Rate-limited on the token endpoint — wait and retry (keep PKCE data for the retry)
+    if (res.status === 429) {
+      const wait = Math.max(parseInt(res.headers.get('Retry-After') || '10'), 5);
+      document.getElementById('loading-playlist-name').textContent =
+        `Spotify rate limit — retrying in ${wait}s…`;
+      await new Promise(r => setTimeout(r, wait * 1000));
+      return handleOAuthCallback(code, returnedState);
+    }
+
+    // Clean up PKCE data — auth code is single-use so no retry possible after this
     localStorage.removeItem(LS.OAUTH_STATE);
     localStorage.removeItem(LS.CODE_VERIFIER);
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const code = body.error || '';
+      const errCode = body.error || '';
       const desc = body.error_description || `HTTP ${res.status}`;
       const err = new Error(desc);
-      err.code = code;
+      err.code = errCode;
       throw err;
     }
 
@@ -185,6 +194,12 @@ async function refreshTokens() {
         refresh_token: S.refreshToken,
       }),
     });
+    if (res.status === 429) {
+      const wait = Math.max(parseInt(res.headers.get('Retry-After') || '10'), 5);
+      showToast(`Spotify rate limit — retrying token refresh in ${wait}s…`, 'error');
+      await new Promise(r => setTimeout(r, wait * 1000));
+      return refreshTokens();
+    }
     if (!res.ok) return false;
     const data = await res.json();
     saveTokens(data);
