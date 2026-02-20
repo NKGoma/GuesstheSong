@@ -1,0 +1,28 @@
+name: Auto-deploy to main
+
+# Every time a fix is pushed to the claude branch, merge it straight to
+# main so GitHub Pages picks it up automatically — no PR needed.
+on:
+  push:
+    branches:
+      - claude/music-timeline-game-app-46c6R
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge feature branch into main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git merge --no-ff origin/claude/music-timeline-game-app-46c6R \
+            -m "Auto-deploy: sync claude branch → main"
+          git push origin main

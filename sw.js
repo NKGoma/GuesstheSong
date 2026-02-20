@@ -1,4 +1,4 @@
-const CACHE_NAME = 'norster-v3';
+const CACHE_NAME = 'norster-v4';
 const ASSETS = [
   './',
   './index.html',
