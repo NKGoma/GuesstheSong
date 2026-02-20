@@ -874,18 +874,21 @@ function showAuthError(msg) {
   if (!banner) {
     banner = document.createElement('div');
     banner.id = 'auth-error-banner';
+    // Use bottom so iPhone notch never hides it; env() safe-area handles home bar
     banner.style.cssText = [
-      'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:300',
-      'background:#2A1010', 'color:#F5A0A0', 'border-bottom:1px solid #5A2020',
-      'padding:14px 20px', 'font-size:14px', 'line-height:1.4',
-      'display:flex', 'align-items:center', 'justify-content:space-between', 'gap:12px'
+      'position:fixed', 'bottom:0', 'left:0', 'right:0', 'z-index:9999',
+      'background:#2A1010', 'color:#F5A0A0', 'border-top:2px solid #C0392B',
+      'padding:16px 20px', 'padding-bottom:max(16px,env(safe-area-inset-bottom))',
+      'font-size:15px', 'line-height:1.5',
+      'display:flex', 'align-items:flex-start', 'justify-content:space-between', 'gap:12px',
+      'box-shadow:0 -4px 24px rgba(0,0,0,0.5)'
     ].join(';');
     document.body.appendChild(banner);
   }
   banner.innerHTML = `
-    <span>${escHtml(msg)}</span>
+    <span style="flex:1">${escHtml(msg)}</span>
     <button onclick="this.parentElement.remove()"
-            style="background:none;border:none;color:#F5A0A0;font-size:20px;cursor:pointer;flex-shrink:0">✕</button>
+            style="background:none;border:none;color:#F5A0A0;font-size:22px;cursor:pointer;flex-shrink:0;line-height:1">✕</button>
   `;
 }
 
